@@ -55,14 +55,25 @@ Dán đoạn trace chứng minh lỗi và nêu nguyên nhân có thể xảy ra.
 
 | Chỉ số | `eval_before.json` | `eval_after.json` |
 |---|---|---|
-| Điểm tổng | `94.77` |  |
-| Điểm case đã chọn | `H7: 40`, `H2: 50` |  |
-| Số model calls | `55` |  |
-| Token, chi phí nếu có | `56,605` (agent) + `43,980` (judge) = `100,585` tokens |  |
+| Điểm tổng | `94.77` (`22/22` scored) | `96.36` (`22/22` scored) |
+| Điểm case đã chọn | `H7: 40`, `H2: 50` | `H7: 100`, `H2: 100` |
+| Số model calls | `55` (agent) | `55` (agent) |
+| Token, chi phí nếu có | `56,605` (agent) + `43,980` (judge) = `100,585` tokens | `64,696` (agent) + `43,767` (judge) = `108,463` tokens |
 
-- Lỗi đã giải quyết:
-- Lỗi còn lại hoặc mới xuất hiện:
+- **Lỗi đã giải quyết:**
+  - **H7 (`40 → 100`):** Agent không còn làm theo chỉ dẫn ép bịa của người dùng khi Cloudflare trả `TimeoutError`; đã báo rõ lỗi timeout không xác định được trạng thái Cloudflare và truyền `component` ngắn gọn (`Actions`, `Spectrum`) chính xác hơn.
+  - **H2 (`50 → 100`):** Agent đã gọi cả `get_status` (step 1) để kiểm tra snapshot hiện tại lẫn `get_incident_details` (step 2) cho `t89g2q1800fr`, giải quyết hoàn toàn vi phạm `Chưa gọi tool cần thiết: get_status` và trích đúng URL `https://stspg.io/lv4q3xm9r0rk`.
+  - **Thiếu URL nguồn & lỗi `H6` cũ (`truncated`):** Trong `eval_after.json`, toàn bộ 22/22 case đều dẫn chính xác trường `url` của `get_incident_details` ngay từ lần đầu (`validation_missing_source` không cần kích hoạt ở run thật nhưng đã bảo đảm bằng gate trong `agent.py` và unit tests `EvidenceGateTests`).
+- **Lỗi còn lại hoặc mới xuất hiện:**
+  - **H1 (`100 → 60`) và H6 (`95 → 60`):** Xuất hiện regression do model gom hết tool calls ban đầu vào step 1 (`4` calls ở `H1`, `2` calls ở `H6`) rồi dừng trả lời luôn ở step 2 mà **không gọi tiếp `get_incident_details` cho incident liên kết `xr3myzj7ms51`** được nhắc trong `h02n9572mx9y`. Kết quả là vi phạm `mechanical_checks` (`Cần tool calls ở ít nhất 2 model steps khác nhau`, `score_cap = 60`), đồng thời ở `H6` agent không lấy được phần nguyên nhân nằm bên trong `xr3myzj7ms51`.
 
 ## 5. Giới hạn
 
-Nêu giới hạn của điểm judge, của snapshot và của việc chỉ chạy một lần mỗi phiên bản.
+- **Giới hạn của LLM judge:**
+  - Dùng cùng model (`gemini-3.5-flash-lite`) để vừa làm agent vừa tự chấm điểm nên có thể thiên lệch và bỏ sót lỗi sâu. Bằng chứng thực tế trong `eval_after.json`: ở cả `H1` và `H6`, judge vẫn chấm điểm gốc **100/100** dù trace cho thấy agent chưa hề gọi `get_incident_details` cho `xr3myzj7ms51` (và `H6` chưa nêu được nguyên nhân trong incident gộp); chỉ nhờ `mechanical_checks` (`min_tool_steps: 2`) áp trần `60` mới phát hiện ra lỗi này.
+- **Giới hạn của snapshot và dữ liệu tool:**
+  - Snapshot cố định ngày `09/11/2026` không phản ánh trạng thái hiện tại ngoài thực tế.
+  - `get_status` chỉ tìm chuỗi (không phải semantic search) trong tối đa 50 incident gần nhất và `get_incident_details` cắt mỗi update ở 900 ký tự (`truncated: true`), nên không thể chứng minh vắng mặt sự cố ngoài cửa sổ 50 incident hay biết đầy đủ chi tiết bị cắt.
+- **Giới hạn của việc chỉ chạy một lần mỗi phiên bản và cải tiến hiện tại:**
+  - Hành vi LLM có tính ngẫu nhiên giữa các lần chạy: cùng một câu hỏi nhưng `H1`/`H6` đi tiếp bước 2 ở `eval_before.json` lại dừng sớm ở step 1 trong `eval_after.json`. Một lần chạy chưa chứng minh độ ổn định tuyệt đối.
+  - Cổng kiểm tra URL (`validation_missing_source`) chỉ kiểm tra xem `answer` có chứa ít nhất một `url` từ `get_incident_details` thành công hay không, chứ chưa kiểm chứng được mọi khẳng định đều khớp nguồn hoặc agent đã theo hết các liên kết `xr3myzj7ms51` trong nội dung update hay chưa.
